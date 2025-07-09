@@ -14,7 +14,8 @@ My main contribution to this repo is to port it from Langchain to Microsoft Sema
 7. There a few architectual decisions I don't quite agree with the original authors of the AI Hedge Fund. For example that the original version has risk manager as a different agent, but it merely supplies some data to the portforlio manager agent. So I changed it to as a tool to the portfolio manager agent in my version.
 
 # Architecture
-![image](https://github.com/user-attachments/assets/faf795fd-b0c9-4f0c-92b2-8911ea26b2d9)
+![image](https://github.com/user-attachments/assets/aa6f06ef-625e-4bac-851d-e6a81c555a8d)
+
 Compare the new architecture with Microsoft Semantic Kernel to the previous version below, you can see some improvements:
 1. To leveragte Semantic Kernel's versatility in supporting LLM providers and models, I have moved the creation of agents to the confiuguration file agents_config.json. Instructions and user message template can be easily changed without code change.
 2. To leverage Semantic Kernels' capability in invoking Plugins, I've moved the data gathering logic from agents to the Plugins.
