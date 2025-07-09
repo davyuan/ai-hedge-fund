@@ -20,8 +20,62 @@ Compare the new architecture with Microsoft Semantic Kernel to the previous vers
 1. To leveragte Semantic Kernel's versatility in supporting LLM providers and models, I have moved the creation of agents to the confiuguration file agents_config.json. Instructions and user message template can be easily changed without code change.
 2. To leverage Semantic Kernels' capability in invoking Plugins, I've moved the data gathering logic from agents to the Plugins.
 3. To share state/data between agents, I have created a MCP state server for that purpose.
-4. To deliver analyst agent's results to the Portfolio Manager agent, I use the previous agent's output directly as part of the input to the next agent. No longer the need for manual feed-forward. 
+4. To deliver analyst agent's results to the Portfolio Manager agent, I use the previous agent's output directly as part of the input to the next agent. No longer the need for manual feed-forward.
+   
+## Setup
 
+### Using Poetry
+
+Clone the repository:
+```bash
+git clone https://github.com/davyuan/ai-hedge-fund.git
+cd ai-hedge-fund
+```
+
+1. Install Poetry (if not already installed):
+```bash
+curl -sSL https://install.python-poetry.org | python3 -
+```
+
+2. Install dependencies:
+```bash
+poetry install
+```
+
+3. Set up your environment variables:
+```bash
+# Create .env file for your API keys
+cp .env.example .env
+```
+
+4. Set your API keys:
+```bash
+# For running OpenAI LLMs hosted by Azure (gpt-4o, gpt-4o-mini, etc.)
+# Use your Github API key 
+GITHUB_TOKEN=your-openai-api-key
+
+# For running DeepSeek LLMs (v3 or R1)
+# Get your DeepSeek API key from [https://groq.com/](https://platform.deepseek.com/api_keys)
+DEEPSEEK_API_KEY=your-deepseek-api-key
+
+# For running Google LLMs (Gemini series)
+# Get your Gemini API key from [[https://groq.com/](https://platform.deepseek.com/api_keys)](https://aistudio.google.com/apikey)
+GOOGLE_API_KEY=your-deepseek-api-key
+
+# For getting financial data to power the hedge fund
+# Get your Financial Datasets API key from https://financialdatasets.ai/
+FINANCIAL_DATASETS_API_KEY=your-financial-datasets-api-key
+```
+
+### Running the Hedge Fund
+
+#### With Poetry
+```bash
+poetry run python src/main.py --ticker AAPL
+```
+
+I'm keeping the Readme from original repo below for reference. 
+=====================================================
 # AI Hedge Fund
 
 This is a proof of concept for an AI-powered hedge fund.  The goal of this project is to explore the use of AI to make trading decisions.  This project is for **educational** purposes only and is not intended for real trading or investment.
