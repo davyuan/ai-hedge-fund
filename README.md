@@ -15,10 +15,10 @@ My main contribution to this repo is to port it from Langchain to Microsoft Sema
 
 # Architecture
 ![image](https://github.com/user-attachments/assets/faf795fd-b0c9-4f0c-92b2-8911ea26b2d9)
-Some improvements to the architecture:
+Compare the new architecture with Microsoft Semantic Kernel to the previous version below, you can see some improvements:
 1. To leveragte Semantic Kernel's versatility in supporting LLM providers and models, I have moved the creation of agents to the confiuguration file agents_config.json. Instructions and user message template can be easily changed without code change.
-2. To leverage Semantic Kernels' capability in involing Plugin calls, I've moved the data gathering logic from agents to the Plugins.
-3. To share state between agents, I have created a MCP state server for that purpose.
+2. To leverage Semantic Kernels' capability in invoking Plugins, I've moved the data gathering logic from agents to the Plugins.
+3. To share state/data between agents, I have created a MCP state server for that purpose.
 4. To deliver analyst agent's results to the Portfolio Manager agent, I use the previous agent's output directly as part of the input to the next agent. No longer the need for manual feed-forward. 
 
 # AI Hedge Fund
