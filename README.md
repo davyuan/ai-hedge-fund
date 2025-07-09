@@ -1,3 +1,16 @@
+# AI Hedge Fund ported to Microsoft Semanic Kernel
+
+My main contribution to this repo is to port it from Langchain to Microsoft Semanic Kernel (SK). A few comments on SK as a framework for agent development and orchestration. 
+
+1. It allows the agent to be injected as a dependency so it greatly simplies the work to switch between models and different LLM providers. And yes SK does support a variety of models.
+2. The function calling feature is pretty sweet! Compare my code to the original repo you will see the data gathering/tool calling is greatly simplied. Kudos to SK.
+3. I'm not using the Orchestration in this initial commit yet, but will refactory the code to include it soon.
+4. Workflow is not yet supported in SK, but I read that it is in the works.
+5. Context data is a common use case in financial agents, but that is still to be supported in SK. To do that without context support for the agents, I have experimented a few things.
+   a. Passing data as text between agents. It works well.
+   b. Creating a MCP (Model Context Protocol) server as a state server that acts as a central repository of agent data.
+6. There a few architectual decisions I don't quite agree with the original authors of the AI Hedge Fund. For example that the original version has risk manager as a different agent, but it merely supplies some data to the portforlio manager agent. So I changed it to as a tool to the portfolio manager agent in my version.
+   
 # AI Hedge Fund
 
 This is a proof of concept for an AI-powered hedge fund.  The goal of this project is to explore the use of AI to make trading decisions.  This project is for **educational** purposes only and is not intended for real trading or investment.
