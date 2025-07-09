@@ -1,45 +1,30 @@
-from __future__ import annotations
-
 import json
 from typing_extensions import Literal
-from pydantic import BaseModel
-
 from src.graph.state import AgentState, show_agent_reasoning
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage
-
 from src.tools.api import (
     get_financial_metrics,
     get_market_cap,
     search_line_items,
 )
-from src.utils.llm import call_llm
 from src.utils.progress import progress
+from src.graph.state import AgentState, show_agent_reasoning
+from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
+from typing_extensions import Literal
+from typing import Annotated
+import datetime as dt
+from semantic_kernel.functions import kernel_function
 
 
-class AswathDamodaranSignal(BaseModel):
-    signal: Literal["bullish", "bearish", "neutral"]
-    confidence: float          # 0‒100
-    reasoning: str
+class AnalysisDataPlugin4AswathDamodaran:
 
+    @kernel_function(description="Provides essential data for a specified stock ticker on a specified end date. "
+                        "This function specifically requires an 'end date' to get data as of that point in time. "
+                        "The 'end_date' MUST be provided in 'YYYY-MM-DD' format, for example, '2025-07-06'.")
+    def get_analysis_data(self, ticker:Annotated[str, "The stock ticker symbol (e.g., 'TSLA', 'GOOG', 'AAPL') for which to retrieve analysis data."],
+            end_date: Annotated[str, "REQUIRED: The end date for data retrieval. This MUST be in 'YYYY-MM-DD' format (e.g., '2025-07-06'). Data will be retrieved as of this exact date."]        ) -> Annotated[str, "Returns analysis data Cathie Wood is interested in, based on the ticker and end date."]:
+        #print(f"AnalysisDataPlugin4AswathDamodaran called with ticker:{ticker}, end_date:{end_date}")
+        analysis_data = {}
 
-def aswath_damodaran_agent(state: AgentState):
-    """
-    Analyze US equities through Aswath Damodaran's intrinsic-value lens:
-      • Cost of Equity via CAPM (risk-free + β·ERP)
-      • 5-yr revenue / FCFF growth trends & reinvestment efficiency
-      • FCFF-to-Firm DCF → equity value → per-share intrinsic value
-      • Cross-check with relative valuation (PE vs. Fwd PE sector median proxy)
-    Produces a trading signal and explanation in Damodaran's analytical voice.
-    """
-    data      = state["data"]
-    end_date  = data["end_date"]
-    tickers   = data["tickers"]
-
-    analysis_data: dict[str, dict] = {}
-    damodaran_signals: dict[str, dict] = {}
-
-    for ticker in tickers:
         # ─── Fetch core data ────────────────────────────────────────────────────
         progress.update_status("aswath_damodaran_agent", ticker, "Fetching financial metrics")
         metrics = get_financial_metrics(ticker, end_date, period="ttm", limit=5)
@@ -111,29 +96,8 @@ def aswath_damodaran_agent(state: AgentState):
             "market_cap": market_cap,
         }
 
-        # ─── LLM: craft Damodaran-style narrative ──────────────────────────────
-        progress.update_status("aswath_damodaran_agent", ticker, "Generating Damodaran analysis")
-        damodaran_output = generate_damodaran_output(
-            ticker=ticker,
-            analysis_data=analysis_data,
-            state=state,
-        )
-
-        damodaran_signals[ticker] = damodaran_output.model_dump()
-
-        progress.update_status("aswath_damodaran_agent", ticker, "Done", analysis=damodaran_output.reasoning)
-
-    # ─── Push message back to graph state ──────────────────────────────────────
-    message = HumanMessage(content=json.dumps(damodaran_signals), name="aswath_damodaran_agent")
-
-    if state["metadata"]["show_reasoning"]:
-        show_agent_reasoning(damodaran_signals, "Aswath Damodaran Agent")
-
-    state["data"]["analyst_signals"]["aswath_damodaran_agent"] = damodaran_signals
-    progress.update_status("aswath_damodaran_agent", None, "Done")
-
-    return {"messages": [message], "data": state["data"]}
-
+        progress.update_status("aswath_damodaran_agent", ticker, "Done")
+        return json.dumps(analysis_data)
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Helper analyses
@@ -351,66 +315,3 @@ def estimate_cost_of_equity(beta: float | None) -> float:
     erp = 0.05                # long-run US equity risk premium
     beta = beta if beta is not None else 1.0
     return risk_free + beta * erp
-
-
-# ────────────────────────────────────────────────────────────────────────────────
-# LLM generation
-# ────────────────────────────────────────────────────────────────────────────────
-def generate_damodaran_output(
-    ticker: str,
-    analysis_data: dict[str, any],
-    state: AgentState,
-) -> AswathDamodaranSignal:
-    """
-    Ask the LLM to channel Prof. Damodaran's analytical style:
-      • Story → Numbers → Value narrative
-      • Emphasize risk, growth, and cash-flow assumptions
-      • Cite cost of capital, implied MOS, and valuation cross-checks
-    """
-    template = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                """You are Aswath Damodaran, Professor of Finance at NYU Stern.
-                Use your valuation framework to issue trading signals on US equities.
-
-                Speak with your usual clear, data-driven tone:
-                  ◦ Start with the company "story" (qualitatively)
-                  ◦ Connect that story to key numerical drivers: revenue growth, margins, reinvestment, risk
-                  ◦ Conclude with value: your FCFF DCF estimate, margin of safety, and relative valuation sanity checks
-                  ◦ Highlight major uncertainties and how they affect value
-                Return ONLY the JSON specified below.""",
-            ),
-            (
-                "human",
-                """Ticker: {ticker}
-
-                Analysis data:
-                {analysis_data}
-
-                Respond EXACTLY in this JSON schema:
-                {{
-                  "signal": "bullish" | "bearish" | "neutral",
-                  "confidence": float (0-100),
-                  "reasoning": "string"
-                }}""",
-            ),
-        ]
-    )
-
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
-
-    def default_signal():
-        return AswathDamodaranSignal(
-            signal="neutral",
-            confidence=0.0,
-            reasoning="Parsing error; defaulting to neutral",
-        )
-
-    return call_llm(
-        prompt=prompt,
-        pydantic_model=AswathDamodaranSignal,
-        agent_name="aswath_damodaran_agent",
-        state=state,
-        default_factory=default_signal,
-    )

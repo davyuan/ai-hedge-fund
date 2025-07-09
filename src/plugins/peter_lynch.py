@@ -7,48 +7,32 @@ from src.tools.api import (
     get_company_news,
     get_prices,
 )
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage
-from pydantic import BaseModel
 import json
+import asyncio
 from typing_extensions import Literal
 from src.utils.progress import progress
-from src.utils.llm import call_llm
+from src.graph.state import AgentState, show_agent_reasoning
+from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
+from typing import Annotated
+import datetime as dt
+from src.utils.progress import progress
+from semantic_kernel.functions import kernel_function
+from src.mcp.client import mcp_read_state
 
+class AnalysisDataPlugin4PeterLynch:
 
-class PeterLynchSignal(BaseModel):
-    """
-    Container for the Peter Lynch-style output signal.
-    """
-    signal: Literal["bullish", "bearish", "neutral"]
-    confidence: float
-    reasoning: str
+    @kernel_function(description="Provides essential data for a specified stock ticker on a specified end date. "
+                        "This function specifically requires an 'end date' to get data as of that point in time. "
+                        "The 'end_date' MUST be provided in 'YYYY-MM-DD' format, for example, '2025-07-06'."
+                        "The data returned includes disruptive_analysis, innovation_analysis and valuation_analysis.")
+    async def get_analysis_data(self, ticker:Annotated[str, "The stock ticker symbol (e.g., 'TSLA', 'GOOG', 'AAPL') for which to retrieve analysis data."],
+            end_date: Annotated[str, "REQUIRED: The end date for data retrieval. This MUST be in 'YYYY-MM-DD' format (e.g., '2025-07-06'). Data will be retrieved as of this exact date."]        ) -> Annotated[str, "Returns analysis data Cathie Wood is interested in, based on the ticker and end date."]:
+        #print(f"AnalysisDataPlugin called with ticker:{ticker}, end_date:{end_date}")
+        analysis_data = {}
+        result = await mcp_read_state()
+        state = json.loads(result[0].text)
+        start_date = state["data"]["start_date"]
 
-
-def peter_lynch_agent(state: AgentState):
-    """
-    Analyzes stocks using Peter Lynch's investing principles:
-      - Invest in what you know (clear, understandable businesses).
-      - Growth at a Reasonable Price (GARP), emphasizing the PEG ratio.
-      - Look for consistent revenue & EPS increases and manageable debt.
-      - Be alert for potential "ten-baggers" (high-growth opportunities).
-      - Avoid overly complex or highly leveraged businesses.
-      - Use news sentiment and insider trades for secondary inputs.
-      - If fundamentals strongly align with GARP, be more aggressive.
-
-    The result is a bullish/bearish/neutral signal, along with a
-    confidence (0–100) and a textual reasoning explanation.
-    """
-
-    data = state["data"]
-    start_date = data["start_date"]
-    end_date = data["end_date"]
-    tickers = data["tickers"]
-
-    analysis_data = {}
-    lynch_analysis = {}
-
-    for ticker in tickers:
         progress.update_status("peter_lynch_agent", ticker, "Fetching financial metrics")
         metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5)
 
@@ -135,34 +119,9 @@ def peter_lynch_agent(state: AgentState):
             "insider_activity": insider_activity,
         }
 
-        progress.update_status("peter_lynch_agent", ticker, "Generating Peter Lynch analysis")
-        lynch_output = generate_lynch_output(
-            ticker=ticker,
-            analysis_data=analysis_data[ticker],
-            state=state,
-        )
+        progress.update_status("peter_lynch_agent", ticker, "Done")
 
-        lynch_analysis[ticker] = {
-            "signal": lynch_output.signal,
-            "confidence": lynch_output.confidence,
-            "reasoning": lynch_output.reasoning,
-        }
-
-        progress.update_status("peter_lynch_agent", ticker, "Done", analysis=lynch_output.reasoning)
-
-    # Wrap up results
-    message = HumanMessage(content=json.dumps(lynch_analysis), name="peter_lynch_agent")
-
-    if state["metadata"].get("show_reasoning"):
-        show_agent_reasoning(lynch_analysis, "Peter Lynch Agent")
-
-    # Save signals to state
-    state["data"]["analyst_signals"]["peter_lynch_agent"] = lynch_analysis
-
-    progress.update_status("peter_lynch_agent", None, "Done")
-
-    return {"messages": [message], "data": state["data"]}
-
+        return analysis_data
 
 def analyze_lynch_growth(financial_line_items: list) -> dict:
     """
@@ -435,71 +394,3 @@ def analyze_insider_activity(insider_trades: list) -> dict:
         details.append(f"Mostly insider selling: {buys} buys vs. {sells} sells")
 
     return {"score": score, "details": "; ".join(details)}
-
-
-def generate_lynch_output(
-    ticker: str,
-    analysis_data: dict[str, any],
-    state: AgentState,
-) -> PeterLynchSignal:
-    """
-    Generates a final JSON signal in Peter Lynch's voice & style.
-    """
-    template = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                """You are a Peter Lynch AI agent. You make investment decisions based on Peter Lynch's well-known principles:
-                
-                1. Invest in What You Know: Emphasize understandable businesses, possibly discovered in everyday life.
-                2. Growth at a Reasonable Price (GARP): Rely on the PEG ratio as a prime metric.
-                3. Look for 'Ten-Baggers': Companies capable of growing earnings and share price substantially.
-                4. Steady Growth: Prefer consistent revenue/earnings expansion, less concern about short-term noise.
-                5. Avoid High Debt: Watch for dangerous leverage.
-                6. Management & Story: A good 'story' behind the stock, but not overhyped or too complex.
-                
-                When you provide your reasoning, do it in Peter Lynch's voice:
-                - Cite the PEG ratio
-                - Mention 'ten-bagger' potential if applicable
-                - Refer to personal or anecdotal observations (e.g., "If my kids love the product...")
-                - Use practical, folksy language
-                - Provide key positives and negatives
-                - Conclude with a clear stance (bullish, bearish, or neutral)
-                
-                Return your final output strictly in JSON with the fields:
-                {{
-                  "signal": "bullish" | "bearish" | "neutral",
-                  "confidence": 0 to 100,
-                  "reasoning": "string"
-                }}
-                """,
-            ),
-            (
-                "human",
-                """Based on the following analysis data for {ticker}, produce your Peter Lynch–style investment signal.
-
-                Analysis Data:
-                {analysis_data}
-
-                Return only valid JSON with "signal", "confidence", and "reasoning".
-                """,
-            ),
-        ]
-    )
-
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
-
-    def create_default_signal():
-        return PeterLynchSignal(
-            signal="neutral",
-            confidence=0.0,
-            reasoning="Error in analysis; defaulting to neutral"
-        )
-
-    return call_llm(
-        prompt=prompt,
-        pydantic_model=PeterLynchSignal,
-        agent_name="peter_lynch_agent",
-        state=state,
-        default_factory=create_default_signal,
-    )

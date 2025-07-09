@@ -1,32 +1,26 @@
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items, get_insider_trades, get_company_news
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
+from src.graph.state import AgentState, show_agent_reasoning
+from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 import json
 from typing_extensions import Literal
+from typing import Annotated
+import datetime as dt
 from src.utils.progress import progress
-from src.utils.llm import call_llm
+from semantic_kernel.functions import kernel_function
 
-class CharlieMungerSignal(BaseModel):
-    signal: Literal["bullish", "bearish", "neutral"]
-    confidence: float
-    reasoning: str
+class AnalysisDataPlugin4CharlieMunger:
 
+    @kernel_function(description="Provides essential data for a specified stock ticker on a specified end date. "
+                        "This function specifically requires an 'end date' to get data as of that point in time. "
+                        "The 'end_date' MUST be provided in 'YYYY-MM-DD' format, for example, '2025-07-06'."
+                        "The data returned includes disruptive_analysis, innovation_analysis and valuation_analysis.")
+    def get_analysis_data(self, ticker:Annotated[str, "The stock ticker symbol (e.g., 'TSLA', 'GOOG', 'AAPL') for which to retrieve analysis data."],
+            end_date: Annotated[str, "REQUIRED: The end date for data retrieval. This MUST be in 'YYYY-MM-DD' format (e.g., '2025-07-06'). Data will be retrieved as of this exact date."]        ) -> Annotated[str, "Returns analysis data Cathie Wood is interested in, based on the ticker and end date."]:
+        #print(f"AnalysisDataPlugin4CharlieMunger called with ticker:{ticker}, end_date:{end_date}")
+        analysis_data = {}
 
-def charlie_munger_agent(state: AgentState):
-    """
-    Analyzes stocks using Charlie Munger's investing principles and mental models.
-    Focuses on moat strength, management quality, predictability, and valuation.
-    """
-    data = state["data"]
-    end_date = data["end_date"]
-    tickers = data["tickers"]
-    
-    analysis_data = {}
-    munger_analysis = {}
-    
-    for ticker in tickers:
         progress.update_status("charlie_munger_agent", ticker, "Fetching financial metrics")
         metrics = get_financial_metrics(ticker, end_date, period="annual", limit=10)  # Munger looks at longer periods
         
@@ -120,41 +114,8 @@ def charlie_munger_agent(state: AgentState):
             "news_sentiment": analyze_news_sentiment(company_news) if company_news else "No news data available"
         }
         
-        progress.update_status("charlie_munger_agent", ticker, "Generating Charlie Munger analysis")
-        munger_output = generate_munger_output(
-            ticker=ticker, 
-            analysis_data=analysis_data,
-            state=state,
-        )
-        
-        munger_analysis[ticker] = {
-            "signal": munger_output.signal,
-            "confidence": munger_output.confidence,
-            "reasoning": munger_output.reasoning
-        }
-        
-        progress.update_status("charlie_munger_agent", ticker, "Done", analysis=munger_output.reasoning)
-    
-    # Wrap results in a single message for the chain
-    message = HumanMessage(
-        content=json.dumps(munger_analysis),
-        name="charlie_munger_agent"
-    )
-    
-    # Show reasoning if requested
-    if state["metadata"]["show_reasoning"]:
-        show_agent_reasoning(munger_analysis, "Charlie Munger Agent")
-
-    progress.update_status("charlie_munger_agent", None, "Done")
-    
-    # Add signals to the overall state
-    state["data"]["analyst_signals"]["charlie_munger_agent"] = munger_analysis
-
-    return {
-        "messages": [message],
-        "data": state["data"]
-    }
-
+        progress.update_status("charlie_munger_agent", ticker, "Done")
+        return analysis_data
 
 def analyze_moat_strength(metrics: list, financial_line_items: list) -> dict:
     """
@@ -671,86 +632,3 @@ def analyze_news_sentiment(news_items: list) -> str:
     
     # Just return a simple count for now - in a real implementation, this would use NLP
     return f"Qualitative review of {len(news_items)} recent news items would be needed"
-
-
-def generate_munger_output(
-    ticker: str,
-    analysis_data: dict[str, any],
-    state: AgentState,
-) -> CharlieMungerSignal:
-    """
-    Generates investment decisions in the style of Charlie Munger.
-    """
-    template = ChatPromptTemplate.from_messages([
-        (
-            "system",
-            """You are a Charlie Munger AI agent, making investment decisions using his principles:
-
-            1. Focus on the quality and predictability of the business.
-            2. Rely on mental models from multiple disciplines to analyze investments.
-            3. Look for strong, durable competitive advantages (moats).
-            4. Emphasize long-term thinking and patience.
-            5. Value management integrity and competence.
-            6. Prioritize businesses with high returns on invested capital.
-            7. Pay a fair price for wonderful businesses.
-            8. Never overpay, always demand a margin of safety.
-            9. Avoid complexity and businesses you don't understand.
-            10. "Invert, always invert" - focus on avoiding stupidity rather than seeking brilliance.
-            
-            Rules:
-            - Praise businesses with predictable, consistent operations and cash flows.
-            - Value businesses with high ROIC and pricing power.
-            - Prefer simple businesses with understandable economics.
-            - Admire management with skin in the game and shareholder-friendly capital allocation.
-            - Focus on long-term economics rather than short-term metrics.
-            - Be skeptical of businesses with rapidly changing dynamics or excessive share dilution.
-            - Avoid excessive leverage or financial engineering.
-            - Provide a rational, data-driven recommendation (bullish, bearish, or neutral).
-            
-            When providing your reasoning, be thorough and specific by:
-            1. Explaining the key factors that influenced your decision the most (both positive and negative)
-            2. Applying at least 2-3 specific mental models or disciplines to explain your thinking
-            3. Providing quantitative evidence where relevant (e.g., specific ROIC values, margin trends)
-            4. Citing what you would "avoid" in your analysis (invert the problem)
-            5. Using Charlie Munger's direct, pithy conversational style in your explanation
-            
-            For example, if bullish: "The high ROIC of 22% demonstrates the company's moat. When applying basic microeconomics, we can see that competitors would struggle to..."
-            For example, if bearish: "I see this business making a classic mistake in capital allocation. As I've often said about [relevant Mungerism], this company appears to be..."
-            """
-        ),
-        (
-            "human",
-            """Based on the following analysis, create a Munger-style investment signal.
-
-            Analysis Data for {ticker}:
-            {analysis_data}
-
-            Return the trading signal in this JSON format:
-            {{
-              "signal": "bullish/bearish/neutral",
-              "confidence": float (0-100),
-              "reasoning": "string"
-            }}
-            """
-        )
-    ])
-
-    prompt = template.invoke({
-        "analysis_data": json.dumps(analysis_data, indent=2),
-        "ticker": ticker
-    })
-
-    def create_default_charlie_munger_signal():
-        return CharlieMungerSignal(
-            signal="neutral",
-            confidence=0.0,
-            reasoning="Error in analysis, defaulting to neutral"
-        )
-
-    return call_llm(
-        prompt=prompt,
-        state=state,
-        pydantic_model=CharlieMungerSignal, 
-        agent_name="charlie_munger_agent", 
-        default_factory=create_default_charlie_munger_signal,
-    )

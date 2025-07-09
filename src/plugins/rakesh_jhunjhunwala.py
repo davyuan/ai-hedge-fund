@@ -1,31 +1,29 @@
 from src.graph.state import AgentState, show_agent_reasoning
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage
-from pydantic import BaseModel
-import json
 from typing_extensions import Literal
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 from src.utils.llm import call_llm
 from src.utils.progress import progress
+from src.graph.state import AgentState, show_agent_reasoning
+from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
+from pydantic import BaseModel
+import json
+from typing_extensions import Literal
+from typing import Annotated
+import datetime as dt
+from src.utils.progress import progress
+from semantic_kernel.functions import kernel_function
 
-class RakeshJhunjhunwalaSignal(BaseModel):
-    signal: Literal["bullish", "bearish", "neutral"]
-    confidence: float
-    reasoning: str
+class AnalysisDataPlugin4RakeshJhunjhunwala:
 
-def rakesh_jhunjhunwala_agent(state: AgentState):
-    """Analyzes stocks using Rakesh Jhunjhunwala's principles and LLM reasoning."""
-    data = state["data"]
-    end_date = data["end_date"]
-    tickers = data["tickers"]
+    @kernel_function(description="Provides essential data for a specified stock ticker on a specified end date. "
+                        "This function specifically requires an 'end date' to get data as of that point in time. "
+                        "The 'end_date' MUST be provided in 'YYYY-MM-DD' format, for example, '2025-07-06'."
+                        "The data returned includes disruptive_analysis, innovation_analysis and valuation_analysis.")
+    def get_analysis_data(self, ticker:Annotated[str, "The stock ticker symbol (e.g., 'TSLA', 'GOOG', 'AAPL') for which to retrieve analysis data."],
+            end_date: Annotated[str, "REQUIRED: The end date for data retrieval. This MUST be in 'YYYY-MM-DD' format (e.g., '2025-07-06'). Data will be retrieved as of this exact date."]        ) -> Annotated[str, "Returns analysis data Cathie Wood is interested in, based on the ticker and end date."]:
+        print(f"AnalysisDataPlugin4RakeshJhunjhunwala called with ticker:{ticker}, end_date:{end_date}")
+        analysis_data = {}
 
-    # Collect all analysis for LLM reasoning
-    analysis_data = {}
-    jhunjhunwala_analysis = {}
-
-    for ticker in tickers:
-
-        # Core Data
         progress.update_status("rakesh_jhunjhunwala_agent", ticker, "Fetching financial metrics")
         metrics = get_financial_metrics(ticker, end_date, period="ttm", limit=5)
 
@@ -133,28 +131,8 @@ def rakesh_jhunjhunwala_agent(state: AgentState):
         }
 
         # ─── LLM: craft Jhunjhunwala‑style narrative ──────────────────────────────
-        progress.update_status("rakesh_jhunjhunwala_agent", ticker, "Generating Jhunjhunwala analysis")
-        jhunjhunwala_output = generate_jhunjhunwala_output(
-            ticker=ticker,
-            analysis_data=analysis_data[ticker],
-            state=state,
-        )
-
-        jhunjhunwala_analysis[ticker] = jhunjhunwala_output.model_dump()
-
-        progress.update_status("rakesh_jhunjhunwala_agent", ticker, "Done", analysis=jhunjhunwala_output.reasoning)
-
-    # ─── Push message back to graph state ──────────────────────────────────────
-    message = HumanMessage(content=json.dumps(jhunjhunwala_analysis), name="rakesh_jhunjhunwala_agent")
-
-    if state["metadata"]["show_reasoning"]:
-        show_agent_reasoning(jhunjhunwala_analysis, "Rakesh Jhunjhunwala Agent")
-
-    state["data"]["analyst_signals"]["rakesh_jhunjhunwala_agent"] = jhunjhunwala_analysis
-    progress.update_status("rakesh_jhunjhunwala_agent", None, "Done")
-
-    return {"messages": [message], "data": state["data"]}
-
+        progress.update_status("rakesh_jhunjhunwala_agent", ticker, "Done")
+        return analysis_data
 
 def analyze_profitability(financial_line_items: list) -> dict[str, any]:
     """
@@ -633,72 +611,3 @@ def analyze_rakesh_jhunjhunwala_style(
             "management": management,
         },
     }
-
-
-# ────────────────────────────────────────────────────────────────────────────────
-# LLM generation
-# ────────────────────────────────────────────────────────────────────────────────
-def generate_jhunjhunwala_output(
-    ticker: str,
-    analysis_data: dict[str, any],
-    state: AgentState,
-) -> RakeshJhunjhunwalaSignal:
-    """Get investment decision from LLM with Jhunjhunwala's principles"""
-    template = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                """You are a Rakesh Jhunjhunwala AI agent. Decide on investment signals based on Rakesh Jhunjhunwala's principles:
-                - Circle of Competence: Only invest in businesses you understand
-                - Margin of Safety (> 30%): Buy at a significant discount to intrinsic value
-                - Economic Moat: Look for durable competitive advantages
-                - Quality Management: Seek conservative, shareholder-oriented teams
-                - Financial Strength: Favor low debt, strong returns on equity
-                - Long-term Horizon: Invest in businesses, not just stocks
-                - Growth Focus: Look for companies with consistent earnings and revenue growth
-                - Sell only if fundamentals deteriorate or valuation far exceeds intrinsic value
-
-                When providing your reasoning, be thorough and specific by:
-                1. Explaining the key factors that influenced your decision the most (both positive and negative)
-                2. Highlighting how the company aligns with or violates specific Jhunjhunwala principles
-                3. Providing quantitative evidence where relevant (e.g., specific margins, ROE values, debt levels)
-                4. Concluding with a Jhunjhunwala-style assessment of the investment opportunity
-                5. Using Rakesh Jhunjhunwala's voice and conversational style in your explanation
-
-                For example, if bullish: "I'm particularly impressed with the consistent growth and strong balance sheet, reminiscent of quality companies that create long-term wealth..."
-                For example, if bearish: "The deteriorating margins and high debt levels concern me - this doesn't fit the profile of companies that build lasting value..."
-
-                Follow these guidelines strictly.
-                """,
-            ),
-            (
-                "human",
-                """Based on the following data, create the investment signal as Rakesh Jhunjhunwala would:
-
-                Analysis Data for {ticker}:
-                {analysis_data}
-
-                Return the trading signal in the following JSON format exactly:
-                {{
-                  "signal": "bullish" | "bearish" | "neutral",
-                  "confidence": float between 0 and 100,
-                  "reasoning": "string"
-                }}
-                """,
-            ),
-        ]
-    )
-
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
-
-    # Default fallback signal in case parsing fails
-    def create_default_rakesh_jhunjhunwala_signal():
-        return RakeshJhunjhunwalaSignal(signal="neutral", confidence=0.0, reasoning="Error in analysis, defaulting to neutral")
-
-    return call_llm(
-        prompt=prompt,
-        pydantic_model=RakeshJhunjhunwalaSignal,
-        state=state,
-        agent_name="rakesh_jhunjhunwala_agent",
-        default_factory=create_default_rakesh_jhunjhunwala_signal,
-    )

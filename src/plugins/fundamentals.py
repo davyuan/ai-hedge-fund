@@ -1,22 +1,27 @@
-from langchain_core.messages import HumanMessage
 from src.graph.state import AgentState, show_agent_reasoning
 from src.utils.progress import progress
-import json
-
 from src.tools.api import get_financial_metrics
+from src.graph.state import AgentState, show_agent_reasoning
+from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
+from pydantic import BaseModel
+import json
+from typing_extensions import Literal
+from typing import Annotated
+import datetime as dt
+from src.utils.progress import progress
+from semantic_kernel.functions import kernel_function
 
+class AnalysisDataPlugin4Fundamentails:
 
-##### Fundamental Agent #####
-def fundamentals_analyst_agent(state: AgentState):
-    """Analyzes fundamental data and generates trading signals for multiple tickers."""
-    data = state["data"]
-    end_date = data["end_date"]
-    tickers = data["tickers"]
+    @kernel_function(description="Provides essential data for a specified stock ticker on a specified end date. "
+                        "This function specifically requires an 'end date' to get data as of that point in time. "
+                        "The 'end_date' MUST be provided in 'YYYY-MM-DD' format, for example, '2025-07-06'."
+                        "The data returned includes disruptive_analysis, innovation_analysis and valuation_analysis.")
+    def get_analysis_data(self, ticker:Annotated[str, "The stock ticker symbol (e.g., 'TSLA', 'GOOG', 'AAPL') for which to retrieve analysis data."],
+            end_date: Annotated[str, "REQUIRED: The end date for data retrieval. This MUST be in 'YYYY-MM-DD' format (e.g., '2025-07-06'). Data will be retrieved as of this exact date."]        ) -> Annotated[str, "Returns analysis data Cathie Wood is interested in, based on the ticker and end date."]:
+        #print(f"AnalysisDataPlugin called with ticker:{ticker}, end_date:{end_date}")
+        fundamental_analysis = {}
 
-    # Initialize fundamental analysis for each ticker
-    fundamental_analysis = {}
-
-    for ticker in tickers:
         progress.update_status("fundamentals_analyst_agent", ticker, "Fetching financial metrics")
 
         # Get the financial metrics
@@ -140,22 +145,6 @@ def fundamentals_analyst_agent(state: AgentState):
 
         progress.update_status("fundamentals_analyst_agent", ticker, "Done", analysis=json.dumps(reasoning, indent=4))
 
-    # Create the fundamental analysis message
-    message = HumanMessage(
-        content=json.dumps(fundamental_analysis),
-        name="fundamentals_analyst_agent",
-    )
-
-    # Print the reasoning if the flag is set
-    if state["metadata"]["show_reasoning"]:
-        show_agent_reasoning(fundamental_analysis, "Fundamental Analysis Agent")
-
-    # Add the signal to the analyst_signals list
-    state["data"]["analyst_signals"]["fundamentals_analyst_agent"] = fundamental_analysis
-
-    progress.update_status("fundamentals_analyst_agent", None, "Done")
+        progress.update_status("fundamentals_analyst_agent", None, "Done")
     
-    return {
-        "messages": [message],
-        "data": data,
-    }
+        return fundamental_analysis

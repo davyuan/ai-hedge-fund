@@ -6,42 +6,29 @@ from src.tools.api import (
     get_insider_trades,
     get_company_news,
 )
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage
-from pydantic import BaseModel
-import json
 from typing_extensions import Literal
 from src.utils.progress import progress
-from src.utils.llm import call_llm
 import statistics
+from src.graph.state import AgentState, show_agent_reasoning
+from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
+from src.utils.progress import progress
+import json
+from typing_extensions import Literal
+from typing import Annotated
+import datetime as dt
+from semantic_kernel.functions import kernel_function
 
+class AnalysisDataPlugin4PhilFisher:
 
-class PhilFisherSignal(BaseModel):
-    signal: Literal["bullish", "bearish", "neutral"]
-    confidence: float
-    reasoning: str
+    @kernel_function(description="Provides essential data for a specified stock ticker on a specified end date. "
+                        "This function specifically requires an 'end date' to get data as of that point in time. "
+                        "The 'end_date' MUST be provided in 'YYYY-MM-DD' format, for example, '2025-07-06'."
+                        "The data returned includes disruptive_analysis, innovation_analysis and valuation_analysis.")
+    def get_analysis_data(self, ticker:Annotated[str, "The stock ticker symbol (e.g., 'TSLA', 'GOOG', 'AAPL') for which to retrieve analysis data."],
+            end_date: Annotated[str, "REQUIRED: The end date for data retrieval. This MUST be in 'YYYY-MM-DD' format (e.g., '2025-07-06'). Data will be retrieved as of this exact date."]        ) -> Annotated[str, "Returns analysis data Cathie Wood is interested in, based on the ticker and end date."]:
+        #print(f"AnalysisDataPlugin called with ticker:{ticker}, end_date:{end_date}")
+        analysis_data = {}
 
-
-def phil_fisher_agent(state: AgentState):
-    """
-    Analyzes stocks using Phil Fisher's investing principles:
-      - Seek companies with long-term above-average growth potential
-      - Emphasize quality of management and R&D
-      - Look for strong margins, consistent growth, and manageable leverage
-      - Combine fundamental 'scuttlebutt' style checks with basic sentiment and insider data
-      - Willing to pay up for quality, but still mindful of valuation
-      - Generally focuses on long-term compounding
-
-    Returns a bullish/bearish/neutral signal with confidence and reasoning.
-    """
-    data = state["data"]
-    end_date = data["end_date"]
-    tickers = data["tickers"]
-
-    analysis_data = {}
-    fisher_analysis = {}
-
-    for ticker in tickers:
         progress.update_status("phil_fisher_agent", ticker, "Fetching financial metrics")
         metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5)
 
@@ -138,33 +125,9 @@ def phil_fisher_agent(state: AgentState):
             "sentiment_analysis": sentiment_analysis,
         }
 
-        progress.update_status("phil_fisher_agent", ticker, "Generating Phil Fisher-style analysis")
-        fisher_output = generate_fisher_output(
-            ticker=ticker,
-            analysis_data=analysis_data,
-            state=state,
-        )
+        progress.update_status("phil_fisher_agent", ticker, "Done")
 
-        fisher_analysis[ticker] = {
-            "signal": fisher_output.signal,
-            "confidence": fisher_output.confidence,
-            "reasoning": fisher_output.reasoning,
-        }
-
-        progress.update_status("phil_fisher_agent", ticker, "Done", analysis=fisher_output.reasoning)
-
-    # Wrap results in a single message
-    message = HumanMessage(content=json.dumps(fisher_analysis), name="phil_fisher_agent")
-
-    if state["metadata"].get("show_reasoning"):
-        show_agent_reasoning(fisher_analysis, "Phil Fisher Agent")
-
-    state["data"]["analyst_signals"]["phil_fisher_agent"] = fisher_analysis
-
-    progress.update_status("phil_fisher_agent", None, "Done")
-    
-    return {"messages": [message], "data": state["data"]}
-
+        return analysis_data
 
 def analyze_fisher_growth_quality(financial_line_items: list) -> dict:
     """
@@ -524,77 +487,3 @@ def analyze_sentiment(news_items: list) -> dict:
         details.append("Mostly positive/neutral headlines")
 
     return {"score": score, "details": "; ".join(details)}
-
-
-def generate_fisher_output(
-    ticker: str,
-    analysis_data: dict[str, any],
-    state: AgentState,
-) -> PhilFisherSignal:
-    """
-    Generates a JSON signal in the style of Phil Fisher.
-    """
-    template = ChatPromptTemplate.from_messages(
-        [
-            (
-              "system",
-              """You are a Phil Fisher AI agent, making investment decisions using his principles:
-  
-              1. Emphasize long-term growth potential and quality of management.
-              2. Focus on companies investing in R&D for future products/services.
-              3. Look for strong profitability and consistent margins.
-              4. Willing to pay more for exceptional companies but still mindful of valuation.
-              5. Rely on thorough research (scuttlebutt) and thorough fundamental checks.
-              
-              When providing your reasoning, be thorough and specific by:
-              1. Discussing the company's growth prospects in detail with specific metrics and trends
-              2. Evaluating management quality and their capital allocation decisions
-              3. Highlighting R&D investments and product pipeline that could drive future growth
-              4. Assessing consistency of margins and profitability metrics with precise numbers
-              5. Explaining competitive advantages that could sustain growth over 3-5+ years
-              6. Using Phil Fisher's methodical, growth-focused, and long-term oriented voice
-              
-              For example, if bullish: "This company exhibits the sustained growth characteristics we seek, with revenue increasing at 18% annually over five years. Management has demonstrated exceptional foresight by allocating 15% of revenue to R&D, which has produced three promising new product lines. The consistent operating margins of 22-24% indicate pricing power and operational efficiency that should continue to..."
-              
-              For example, if bearish: "Despite operating in a growing industry, management has failed to translate R&D investments (only 5% of revenue) into meaningful new products. Margins have fluctuated between 10-15%, showing inconsistent operational execution. The company faces increasing competition from three larger competitors with superior distribution networks. Given these concerns about long-term growth sustainability..."
-              
-              You must output a JSON object with:
-                - "signal": "bullish" or "bearish" or "neutral"
-                - "confidence": a float between 0 and 100
-                - "reasoning": a detailed explanation
-              """,
-            ),
-            (
-              "human",
-              """Based on the following analysis, create a Phil Fisher-style investment signal.
-
-              Analysis Data for {ticker}:
-              {analysis_data}
-
-              Return the trading signal in this JSON format:
-              {{
-                "signal": "bullish/bearish/neutral",
-                "confidence": float (0-100),
-                "reasoning": "string"
-              }}
-              """,
-            ),
-        ]
-    )
-
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
-
-    def create_default_signal():
-        return PhilFisherSignal(
-            signal="neutral",
-            confidence=0.0,
-            reasoning="Error in analysis, defaulting to neutral"
-        )
-
-    return call_llm(
-        prompt=prompt,
-        pydantic_model=PhilFisherSignal,
-        state=state,
-        agent_name="phil_fisher_agent",
-        default_factory=create_default_signal,
-    )

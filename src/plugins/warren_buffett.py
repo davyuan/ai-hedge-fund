@@ -1,31 +1,26 @@
 from src.graph.state import AgentState, show_agent_reasoning
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage
-from pydantic import BaseModel
 import json
 from typing_extensions import Literal
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
-from src.utils.llm import call_llm
 from src.utils.progress import progress
+from src.graph.state import AgentState, show_agent_reasoning
+from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
+from typing_extensions import Literal
+from typing import Annotated
+import datetime as dt
+from semantic_kernel.functions import kernel_function
 
+class AnalysisDataPlugin4WarrenBuffett:
 
-class WarrenBuffettSignal(BaseModel):
-    signal: Literal["bullish", "bearish", "neutral"]
-    confidence: float
-    reasoning: str
+    @kernel_function(description="Provides essential data for a specified stock ticker on a specified end date. "
+                        "This function specifically requires an 'end date' to get data as of that point in time. "
+                        "The 'end_date' MUST be provided in 'YYYY-MM-DD' format, for example, '2025-07-06'."
+                        "The data returned includes disruptive_analysis, innovation_analysis and valuation_analysis.")
+    def get_analysis_data(self, ticker:Annotated[str, "The stock ticker symbol (e.g., 'TSLA', 'GOOG', 'AAPL') for which to retrieve analysis data."],
+            end_date: Annotated[str, "REQUIRED: The end date for data retrieval. This MUST be in 'YYYY-MM-DD' format (e.g., '2025-07-06'). Data will be retrieved as of this exact date."]        ) -> Annotated[str, "Returns analysis data Cathie Wood is interested in, based on the ticker and end date."]:
+        #print(f"AnalysisDataPlugin4WarrenBuffett called with ticker:{ticker}, end_date:{end_date}")
+        analysis_data = {}
 
-
-def warren_buffett_agent(state: AgentState):
-    """Analyzes stocks using Buffett's principles and LLM reasoning."""
-    data = state["data"]
-    end_date = data["end_date"]
-    tickers = data["tickers"]
-
-    # Collect all analysis for LLM reasoning
-    analysis_data = {}
-    buffett_analysis = {}
-
-    for ticker in tickers:
         progress.update_status("warren_buffett_agent", ticker, "Fetching financial metrics")
         # Fetch required data - request more periods for better trend analysis
         metrics = get_financial_metrics(ticker, end_date, period="ttm", limit=10)
@@ -119,36 +114,8 @@ def warren_buffett_agent(state: AgentState):
             "margin_of_safety": margin_of_safety,
         }
 
-        progress.update_status("warren_buffett_agent", ticker, "Generating Warren Buffett analysis")
-        buffett_output = generate_buffett_output(
-            ticker=ticker,
-            analysis_data=analysis_data,
-            state=state,
-        )
-
-        # Store analysis in consistent format with other agents
-        buffett_analysis[ticker] = {
-            "signal": buffett_output.signal,
-            "confidence": buffett_output.confidence,
-            "reasoning": buffett_output.reasoning,
-        }
-
-        progress.update_status("warren_buffett_agent", ticker, "Done", analysis=buffett_output.reasoning)
-
-    # Create the message
-    message = HumanMessage(content=json.dumps(buffett_analysis), name="warren_buffett_agent")
-
-    # Show reasoning if requested
-    if state["metadata"]["show_reasoning"]:
-        show_agent_reasoning(buffett_analysis, "Warren Buffett Agent")
-
-    # Add the signal to the analyst_signals list
-    state["data"]["analyst_signals"]["warren_buffett_agent"] = buffett_analysis
-
-    progress.update_status("warren_buffett_agent", None, "Done")
-
-    return {"messages": [message], "data": state["data"]}
-
+        progress.update_status("warren_buffett_agent", ticker, "Done")
+        return analysis_data
 
 def analyze_fundamentals(metrics: list) -> dict[str, any]:
     """Analyze company fundamentals based on Buffett's criteria."""
@@ -728,114 +695,3 @@ def analyze_pricing_power(financial_line_items: list, metrics: list) -> dict[str
         "score": score,
         "details": "; ".join(reasoning) if reasoning else "Limited pricing power analysis available"
     }
-
-
-def generate_buffett_output(
-    ticker: str,
-    analysis_data: dict[str, any],
-    state: AgentState,
-) -> WarrenBuffettSignal:
-    """Get investment decision from LLM with Buffett's principles"""
-    template = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                """You are Warren Buffett, the Oracle of Omaha. Analyze investment opportunities using my proven methodology developed over 60+ years of investing:
-
-                MY CORE PRINCIPLES:
-                1. Circle of Competence: "Risk comes from not knowing what you're doing." Only invest in businesses I thoroughly understand.
-                2. Economic Moats: Seek companies with durable competitive advantages - pricing power, brand strength, scale advantages, switching costs.
-                3. Quality Management: Look for honest, competent managers who think like owners and allocate capital wisely.
-                4. Financial Fortress: Prefer companies with strong balance sheets, consistent earnings, and minimal debt.
-                5. Intrinsic Value & Margin of Safety: Pay significantly less than what the business is worth - "Price is what you pay, value is what you get."
-                6. Long-term Perspective: "Our favorite holding period is forever." Look for businesses that will prosper for decades.
-                7. Pricing Power: The best businesses can raise prices without losing customers.
-
-                MY CIRCLE OF COMPETENCE PREFERENCES:
-                STRONGLY PREFER:
-                - Consumer staples with strong brands (Coca-Cola, P&G, Walmart, Costco)
-                - Commercial banking (Bank of America, Wells Fargo) - NOT investment banking
-                - Insurance (GEICO, property & casualty)
-                - Railways and utilities (BNSF, simple infrastructure)
-                - Simple industrials with moats (UPS, FedEx, Caterpillar)
-                - Energy companies with reserves and pipelines (Chevron, not exploration)
-
-                GENERALLY AVOID:
-                - Complex technology (semiconductors, software, except Apple due to consumer ecosystem)
-                - Biotechnology and pharmaceuticals (too complex, regulatory risk)
-                - Airlines (commodity business, poor economics)
-                - Cryptocurrency and fintech speculation
-                - Complex derivatives or financial instruments
-                - Rapid technology change industries
-                - Capital-intensive businesses without pricing power
-
-                APPLE EXCEPTION: I own Apple not as a tech stock, but as a consumer products company with an ecosystem that creates switching costs.
-
-                MY INVESTMENT CRITERIA HIERARCHY:
-                First: Circle of Competence - If I don't understand the business model or industry dynamics, I don't invest, regardless of potential returns.
-                Second: Business Quality - Does it have a moat? Will it still be thriving in 20 years?
-                Third: Management - Do they act in shareholders' interests? Smart capital allocation?
-                Fourth: Financial Strength - Consistent earnings, low debt, strong returns on capital?
-                Fifth: Valuation - Am I paying a reasonable price for this wonderful business?
-
-                MY LANGUAGE & STYLE:
-                - Use folksy wisdom and simple analogies ("It's like...")
-                - Reference specific past investments when relevant (Coca-Cola, Apple, GEICO, See's Candies, etc.)
-                - Quote my own sayings when appropriate
-                - Be candid about what I don't understand
-                - Show patience - most opportunities don't meet my criteria
-                - Express genuine enthusiasm for truly exceptional businesses
-                - Be skeptical of complexity and Wall Street jargon
-
-                CONFIDENCE LEVELS:
-                - 90-100%: Exceptional business within my circle, trading at attractive price
-                - 70-89%: Good business with decent moat, fair valuation
-                - 50-69%: Mixed signals, would need more information or better price
-                - 30-49%: Outside my expertise or concerning fundamentals
-                - 10-29%: Poor business or significantly overvalued
-
-                Remember: I'd rather own a wonderful business at a fair price than a fair business at a wonderful price. And when in doubt, the answer is usually "no" - there's no penalty for missed opportunities, only for permanent capital loss.
-                """,
-            ),
-            (
-                "human",
-                """Analyze this investment opportunity for {ticker}:
-
-                COMPREHENSIVE ANALYSIS DATA:
-                {analysis_data}
-
-                Please provide your investment decision in exactly this JSON format:
-                {{
-                  "signal": "bullish" | "bearish" | "neutral",
-                  "confidence": float between 0 and 100,
-                  "reasoning": "string with your detailed Warren Buffett-style analysis"
-                }}
-
-                In your reasoning, be specific about:
-                1. Whether this falls within your circle of competence and why (CRITICAL FIRST STEP)
-                2. Your assessment of the business's competitive moat
-                3. Management quality and capital allocation
-                4. Financial health and consistency
-                5. Valuation relative to intrinsic value
-                6. Long-term prospects and any red flags
-                7. How this compares to opportunities in your portfolio
-
-                Write as Warren Buffett would speak - plainly, with conviction, and with specific references to the data provided.
-                """,
-            ),
-        ]
-    )
-
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
-
-    # Default fallback signal in case parsing fails
-    def create_default_warren_buffett_signal():
-        return WarrenBuffettSignal(signal="neutral", confidence=0.0, reasoning="Error in analysis, defaulting to neutral")
-
-    return call_llm(
-        prompt=prompt,
-        pydantic_model=WarrenBuffettSignal,
-        agent_name="warren_buffett_agent",
-        state=state,
-        default_factory=create_default_warren_buffett_signal,
-    )

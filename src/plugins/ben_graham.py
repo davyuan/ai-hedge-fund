@@ -1,37 +1,26 @@
+from typing_extensions import Literal
+from src.utils.progress import progress
+import math
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 import json
 from typing_extensions import Literal
+from typing import Annotated
+import datetime as dt
 from src.utils.progress import progress
-from src.utils.llm import call_llm
-import math
+from semantic_kernel.functions import kernel_function
 
+class AnalysisDataPlugin4BenGraham:
 
-class BenGrahamSignal(BaseModel):
-    signal: Literal["bullish", "bearish", "neutral"]
-    confidence: float
-    reasoning: str
-
-
-def ben_graham_agent(state: AgentState):
-    """
-    Analyzes stocks using Benjamin Graham's classic value-investing principles:
-    1. Earnings stability over multiple years.
-    2. Solid financial strength (low debt, adequate liquidity).
-    3. Discount to intrinsic value (e.g. Graham Number or net-net).
-    4. Adequate margin of safety.
-    """
-    data = state["data"]
-    end_date = data["end_date"]
-    tickers = data["tickers"]
-
-    analysis_data = {}
-    graham_analysis = {}
-
-    for ticker in tickers:
+    @kernel_function(description="Provides essential data for a specified stock ticker on a specified end date. "
+                        "This function specifically requires an 'end date' to get data as of that point in time. "
+                        "The 'end_date' MUST be provided in 'YYYY-MM-DD' format, for example, '2025-07-06'."
+                        "The data returned includes disruptive_analysis, innovation_analysis and valuation_analysis.")
+    def get_analysis_data(self, ticker:Annotated[str, "The stock ticker symbol (e.g., 'TSLA', 'GOOG', 'AAPL') for which to retrieve analysis data."],
+            end_date: Annotated[str, "REQUIRED: The end date for data retrieval. This MUST be in 'YYYY-MM-DD' format (e.g., '2025-07-06'). Data will be retrieved as of this exact date."]        ) -> Annotated[str, "Returns analysis data Cathie Wood is interested in, based on the ticker and end date."]:
+        #print(f"AnalysisDataPlugin4BenGraham called with ticker:{ticker}, end_date:{end_date}")
+        analysis_data = {}
         progress.update_status("ben_graham_agent", ticker, "Fetching financial metrics")
         metrics = get_financial_metrics(ticker, end_date, period="annual", limit=10)
 
@@ -65,30 +54,8 @@ def ben_graham_agent(state: AgentState):
 
         analysis_data[ticker] = {"signal": signal, "score": total_score, "max_score": max_possible_score, "earnings_analysis": earnings_analysis, "strength_analysis": strength_analysis, "valuation_analysis": valuation_analysis}
 
-        progress.update_status("ben_graham_agent", ticker, "Generating Ben Graham analysis")
-        graham_output = generate_graham_output(
-            ticker=ticker,
-            analysis_data=analysis_data,
-            state=state,
-        )
-
-        graham_analysis[ticker] = {"signal": graham_output.signal, "confidence": graham_output.confidence, "reasoning": graham_output.reasoning}
-
-        progress.update_status("ben_graham_agent", ticker, "Done", analysis=graham_output.reasoning)
-
-    # Wrap results in a single message for the chain
-    message = HumanMessage(content=json.dumps(graham_analysis), name="ben_graham_agent")
-
-    # Optionally display reasoning
-    if state["metadata"]["show_reasoning"]:
-        show_agent_reasoning(graham_analysis, "Ben Graham Agent")
-
-    # Store signals in the overall state
-    state["data"]["analyst_signals"]["ben_graham_agent"] = graham_analysis
-
-    progress.update_status("ben_graham_agent", None, "Done")
-
-    return {"messages": [message], "data": state["data"]}
+        progress.update_status("ben_graham_agent", ticker, "Done")
+        return analysis_data
 
 
 def analyze_earnings_stability(metrics: list, financial_line_items: list) -> dict:
@@ -274,71 +241,3 @@ def analyze_valuation_graham(financial_line_items: list, market_cap: float) -> d
     # else: already appended details for missing graham_number
 
     return {"score": score, "details": "; ".join(details)}
-
-
-def generate_graham_output(
-    ticker: str,
-    analysis_data: dict[str, any],
-    state: AgentState,
-) -> BenGrahamSignal:
-    """
-    Generates an investment decision in the style of Benjamin Graham:
-    - Value emphasis, margin of safety, net-nets, conservative balance sheet, stable earnings.
-    - Return the result in a JSON structure: { signal, confidence, reasoning }.
-    """
-
-    template = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                """You are a Benjamin Graham AI agent, making investment decisions using his principles:
-            1. Insist on a margin of safety by buying below intrinsic value (e.g., using Graham Number, net-net).
-            2. Emphasize the company's financial strength (low leverage, ample current assets).
-            3. Prefer stable earnings over multiple years.
-            4. Consider dividend record for extra safety.
-            5. Avoid speculative or high-growth assumptions; focus on proven metrics.
-            
-            When providing your reasoning, be thorough and specific by:
-            1. Explaining the key valuation metrics that influenced your decision the most (Graham Number, NCAV, P/E, etc.)
-            2. Highlighting the specific financial strength indicators (current ratio, debt levels, etc.)
-            3. Referencing the stability or instability of earnings over time
-            4. Providing quantitative evidence with precise numbers
-            5. Comparing current metrics to Graham's specific thresholds (e.g., "Current ratio of 2.5 exceeds Graham's minimum of 2.0")
-            6. Using Benjamin Graham's conservative, analytical voice and style in your explanation
-            
-            For example, if bullish: "The stock trades at a 35% discount to net current asset value, providing an ample margin of safety. The current ratio of 2.5 and debt-to-equity of 0.3 indicate strong financial position..."
-            For example, if bearish: "Despite consistent earnings, the current price of $50 exceeds our calculated Graham Number of $35, offering no margin of safety. Additionally, the current ratio of only 1.2 falls below Graham's preferred 2.0 threshold..."
-                        
-            Return a rational recommendation: bullish, bearish, or neutral, with a confidence level (0-100) and thorough reasoning.
-            """,
-            ),
-            (
-                "human",
-                """Based on the following analysis, create a Graham-style investment signal:
-
-            Analysis Data for {ticker}:
-            {analysis_data}
-
-            Return JSON exactly in this format:
-            {{
-              "signal": "bullish" or "bearish" or "neutral",
-              "confidence": float (0-100),
-              "reasoning": "string"
-            }}
-            """,
-            ),
-        ]
-    )
-
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
-
-    def create_default_ben_graham_signal():
-        return BenGrahamSignal(signal="neutral", confidence=0.0, reasoning="Error in generating analysis; defaulting to neutral.")
-
-    return call_llm(
-        prompt=prompt,
-        pydantic_model=BenGrahamSignal,
-        agent_name="ben_graham_agent",
-        state=state,
-        default_factory=create_default_ben_graham_signal,
-    )

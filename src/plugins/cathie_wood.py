@@ -1,41 +1,28 @@
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 import json
 from typing_extensions import Literal
+from typing import Annotated
+import datetime as dt
 from src.utils.progress import progress
-from src.utils.llm import call_llm
+from semantic_kernel.functions import kernel_function
 
+class AnalysisDataPlugin4CathieWood:
 
-class CathieWoodSignal(BaseModel):
-    signal: Literal["bullish", "bearish", "neutral"]
-    confidence: float
-    reasoning: str
+    @kernel_function(description="Provides essential data for a specified stock ticker on a specified end date. "
+                        "This function specifically requires an 'end date' to get data as of that point in time. "
+                        "The 'end_date' MUST be provided in 'YYYY-MM-DD' format, for example, '2025-07-06'."
+                        "The data returned includes disruptive_analysis, innovation_analysis and valuation_analysis.")
+    def get_analysis_data(self, ticker:Annotated[str, "The stock ticker symbol (e.g., 'TSLA', 'GOOG', 'AAPL') for which to retrieve analysis data."],
+            end_date: Annotated[str, "REQUIRED: The end date for data retrieval. This MUST be in 'YYYY-MM-DD' format (e.g., '2025-07-06'). Data will be retrieved as of this exact date."]        ) -> Annotated[str, "Returns analysis data Cathie Wood is interested in, based on the ticker and end date."]:
+        #print(f"AnalysisDataPlugin4CathieWood called with ticker:{ticker}, end_date:{end_date}")
+        analysis_data = {}
 
-
-def cathie_wood_agent(state: AgentState):
-    """
-    Analyzes stocks using Cathie Wood's investing principles and LLM reasoning.
-    1. Prioritizes companies with breakthrough technologies or business models
-    2. Focuses on industries with rapid adoption curves and massive TAM (Total Addressable Market).
-    3. Invests mostly in AI, robotics, genomic sequencing, fintech, and blockchain.
-    4. Willing to endure short-term volatility for long-term gains.
-    """
-    data = state["data"]
-    end_date = data["end_date"]
-    tickers = data["tickers"]
-
-    analysis_data = {}
-    cw_analysis = {}
-
-    for ticker in tickers:
         progress.update_status("cathie_wood_agent", ticker, "Fetching financial metrics")
         metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5)
 
         progress.update_status("cathie_wood_agent", ticker, "Gathering financial line items")
-        # Request multiple periods of data (annual or TTM) for a more robust view.
         financial_line_items = search_line_items(
             ticker,
             [
@@ -82,28 +69,8 @@ def cathie_wood_agent(state: AgentState):
 
         analysis_data[ticker] = {"signal": signal, "score": total_score, "max_score": max_possible_score, "disruptive_analysis": disruptive_analysis, "innovation_analysis": innovation_analysis, "valuation_analysis": valuation_analysis}
 
-        progress.update_status("cathie_wood_agent", ticker, "Generating Cathie Wood analysis")
-        cw_output = generate_cathie_wood_output(
-            ticker=ticker,
-            analysis_data=analysis_data,
-            state=state,
-        )
-
-        cw_analysis[ticker] = {"signal": cw_output.signal, "confidence": cw_output.confidence, "reasoning": cw_output.reasoning}
-
-        progress.update_status("cathie_wood_agent", ticker, "Done", analysis=cw_output.reasoning)
-
-    message = HumanMessage(content=json.dumps(cw_analysis), name="cathie_wood_agent")
-
-    if state["metadata"].get("show_reasoning"):
-        show_agent_reasoning(cw_analysis, "Cathie Wood Agent")
-
-    state["data"]["analyst_signals"]["cathie_wood_agent"] = cw_analysis
-
-    progress.update_status("cathie_wood_agent", None, "Done")
-
-    return {"messages": [message], "data": state["data"]}
-
+        progress.update_status("cathie_wood_agent", ticker, "Done")
+        return json.dumps(analysis_data)
 
 def analyze_disruptive_potential(metrics: list, financial_line_items: list) -> dict:
     """
@@ -357,76 +324,3 @@ def analyze_cathie_wood_valuation(financial_line_items: list, market_cap: float)
     return {"score": score, "details": "; ".join(details), "intrinsic_value": intrinsic_value, "margin_of_safety": margin_of_safety}
 
 
-def generate_cathie_wood_output(
-    ticker: str,
-    analysis_data: dict[str, any],
-    state: AgentState,
-) -> CathieWoodSignal:
-    """
-    Generates investment decisions in the style of Cathie Wood.
-    """
-    template = ChatPromptTemplate.from_messages(
-        [
-            (
-                "system",
-                """You are a Cathie Wood AI agent, making investment decisions using her principles:
-
-            1. Seek companies leveraging disruptive innovation.
-            2. Emphasize exponential growth potential, large TAM.
-            3. Focus on technology, healthcare, or other future-facing sectors.
-            4. Consider multi-year time horizons for potential breakthroughs.
-            5. Accept higher volatility in pursuit of high returns.
-            6. Evaluate management's vision and ability to invest in R&D.
-
-            Rules:
-            - Identify disruptive or breakthrough technology.
-            - Evaluate strong potential for multi-year revenue growth.
-            - Check if the company can scale effectively in a large market.
-            - Use a growth-biased valuation approach.
-            - Provide a data-driven recommendation (bullish, bearish, or neutral).
-            
-            When providing your reasoning, be thorough and specific by:
-            1. Identifying the specific disruptive technologies/innovations the company is leveraging
-            2. Highlighting growth metrics that indicate exponential potential (revenue acceleration, expanding TAM)
-            3. Discussing the long-term vision and transformative potential over 5+ year horizons
-            4. Explaining how the company might disrupt traditional industries or create new markets
-            5. Addressing R&D investment and innovation pipeline that could drive future growth
-            6. Using Cathie Wood's optimistic, future-focused, and conviction-driven voice
-            
-            For example, if bullish: "The company's AI-driven platform is transforming the $500B healthcare analytics market, with evidence of platform adoption accelerating from 40% to 65% YoY. Their R&D investments of 22% of revenue are creating a technological moat that positions them to capture a significant share of this expanding market. The current valuation doesn't reflect the exponential growth trajectory we expect as..."
-            For example, if bearish: "While operating in the genomics space, the company lacks truly disruptive technology and is merely incrementally improving existing techniques. R&D spending at only 8% of revenue signals insufficient investment in breakthrough innovation. With revenue growth slowing from 45% to 20% YoY, there's limited evidence of the exponential adoption curve we look for in transformative companies..."
-            """,
-            ),
-            (
-                "human",
-                """Based on the following analysis, create a Cathie Wood-style investment signal.
-
-            Analysis Data for {ticker}:
-            {analysis_data}
-
-            Return the trading signal in this JSON format:
-            {{
-              "signal": "bullish/bearish/neutral",
-              "confidence": float (0-100),
-              "reasoning": "string"
-            }}
-            """,
-            ),
-        ]
-    )
-
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
-
-    def create_default_cathie_wood_signal():
-        return CathieWoodSignal(signal="neutral", confidence=0.0, reasoning="Error in analysis, defaulting to neutral")
-
-    return call_llm(
-        prompt=prompt,
-        pydantic_model=CathieWoodSignal,
-        agent_name="cathie_wood_agent",
-        state=state,
-        default_factory=create_default_cathie_wood_signal,
-    )
-
-
-# source: https://ark-invest.com

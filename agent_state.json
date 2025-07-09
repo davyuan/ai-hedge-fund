@@ -1,0 +1,49 @@
+{
+    "data": {
+        "tickers": [
+            "TSLA"
+        ],
+        "portfolio": {
+            "cash": 100000.0,
+            "margin_requirement": 0.0,
+            "margin_used": 0.0,
+            "positions": {
+                "TSLA": {
+                    "long": 0,
+                    "short": 0,
+                    "long_cost_basis": 0.0,
+                    "short_cost_basis": 0.0,
+                    "short_margin_used": 0.0
+                }
+            },
+            "realized_gains": {
+                "TSLA": {
+                    "long": 0.0,
+                    "short": 0.0
+                }
+            }
+        },
+        "start_date": "2025-04-08",
+        "end_date": "2025-07-08",
+        "analyst_signals": {
+            "risk_management_agent": {
+                "TSLA": {
+                    "remaining_position_limit": 20000.0,
+                    "current_price": 297.81,
+                    "reasoning": {
+                        "portfolio_value": 100000.0,
+                        "current_position_value": 0.0,
+                        "position_limit": 20000.0,
+                        "remaining_limit": 20000.0,
+                        "available_cash": 100000.0
+                    }
+                }
+            }
+        }
+    },
+    "metadata": {
+        "show_reasoning": false,
+        "model_name": "deepseek-chat",
+        "model_provider": "DeepSeek"
+    }
+}

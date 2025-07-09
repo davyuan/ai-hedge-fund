@@ -26,6 +26,8 @@ def print_trading_output(result: dict) -> None:
         print(f"{Fore.RED}No trading decisions available{Style.RESET_ALL}")
         return
 
+    decisions = decisions["decisions"]
+
     # Print decisions for each ticker
     for ticker, decision in decisions.items():
         print(f"\n{Fore.WHITE}{Style.BRIGHT}Analysis for {Fore.CYAN}{ticker}{Style.RESET_ALL}")
@@ -40,7 +42,6 @@ def print_trading_output(result: dict) -> None:
             # Skip Risk Management agent in the signals section
             if agent == "risk_management_agent":
                 continue
-
             signal = signals[ticker]
             agent_name = agent.replace("_agent", "").replace("_", " ").title()
             signal_type = signal.get("signal", "").upper()

@@ -1,35 +1,55 @@
 import sys
+import asyncio
+import json
+import re
+import argparse
+from datetime import datetime
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
-from langgraph.graph import END, StateGraph
 from colorama import Fore, Style, init
 import questionary
-from src.agents.portfolio_manager import portfolio_management_agent
-from src.agents.risk_manager import risk_management_agent
 from src.graph.state import AgentState
 from src.utils.display import print_trading_output
 from src.utils.analysts import ANALYST_ORDER, get_analyst_nodes
 from src.utils.progress import progress
 from src.llm.models import LLM_ORDER, OLLAMA_LLM_ORDER, get_model_info, ModelProvider
 from src.utils.ollama import ensure_ollama_and_model
-
-import argparse
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
+from src.utils.agents import create_kernel_with_chat_completion, create_agent
+from src.mcp.client import mcp_read_state, mcp_upsert_state
+from src.plugins.cathie_wood import AnalysisDataPlugin4CathieWood
+from src.plugins.aswath_damodaran import AnalysisDataPlugin4AswathDamodaran
+from src.plugins.ben_graham import AnalysisDataPlugin4BenGraham
+from src.plugins.bill_ackman import AnalysisDataPlugin4BillAckman
+from src.plugins.charlie_munger import AnalysisDataPlugin4CharlieMunger
+from src.plugins.michael_burry import AnalysisDataPlugin4MichaelBurry
+from src.plugins.peter_lynch import AnalysisDataPlugin4PeterLynch
+from src.plugins.phil_fisher import AnalysisDataPlugin4PhilFisher
+from src.plugins.rakesh_jhunjhunwala import AnalysisDataPlugin4RakeshJhunjhunwala
+from src.plugins.stanley_druckenmiller import AnalysisDataPlugin4StanleyDruckenmiller
+from src.plugins.warren_buffett import AnalysisDataPlugin4WarrenBuffett
+from src.plugins.portfolio_manager import PorfolioDataPlugin
+from src.plugins.risk_manager import RiskDataPlugin
 from src.utils.visualize import save_graph_as_png
-import json
+from dateutil.relativedelta import relativedelta
+from semantic_kernel.agents import ChatCompletionAgent
 
 # Load environment variables from .env file
 load_dotenv()
 
 init(autoreset=True)
 
-
-def parse_hedge_fund_response(response):
+def parse_hedge_fund_response(response: str):
     """Parses a JSON string and returns a dictionary."""
     try:
-        return json.loads(response)
+        match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL | re.IGNORECASE)
+
+        if match:
+            json_string = match.group(1).strip() # Extract the content and strip whitespace
+            parsed_data = json.loads(json_string)
+            return parsed_data
+        else:
+            parsed_data = json.loads(response)
+            return parsed_data
     except json.JSONDecodeError as e:
         print(f"JSON decoding error: {e}\nResponse: {repr(response)}")
         return None
@@ -41,6 +61,12 @@ def parse_hedge_fund_response(response):
         return None
 
 
+async def invoke_agent(agent: ChatCompletionAgent, user_message:str):
+    async for response in agent.invoke(
+        messages = user_message
+    ):
+        return response
+
 ##### Run the Hedge Fund #####
 def run_hedge_fund(
     tickers: list[str],
@@ -49,27 +75,13 @@ def run_hedge_fund(
     portfolio: dict,
     show_reasoning: bool = False,
     selected_analysts: list[str] = [],
-    model_name: str = "gpt-4o",
+    model_name: str = "gpt-4o-mini",
     model_provider: str = "OpenAI",
 ):
     # Start progress tracking
     progress.start()
 
-    try:
-        # Create a new workflow if analysts are customized
-        if selected_analysts:
-            workflow = create_workflow(selected_analysts)
-            agent = workflow.compile()
-        else:
-            agent = app
-
-        final_state = agent.invoke(
-            {
-                "messages": [
-                    HumanMessage(
-                        content="Make trading decisions based on the provided data.",
-                    )
-                ],
+    state =  {
                 "data": {
                     "tickers": tickers,
                     "portfolio": portfolio,
@@ -82,12 +94,30 @@ def run_hedge_fund(
                     "model_name": model_name,
                     "model_provider": model_provider,
                 },
-            },
-        )
+            }
+    result = asyncio.run(mcp_upsert_state(state))
+
+    # Create the agents with seclected analysts
+    agents = create_agents(selected_analysts=selected_analysts, model_id=model_name, model_provider=model_provider)
+
+    try:
+        for ticker in tickers:
+            response = None
+            analysis_data = {}
+            for agent, user_message_template in agents:
+                # Format the user message using the template and arguments
+                user_message = user_message_template.replace("{$ticker}", ticker).replace("{$end_date}", end_date)
+                if response != None :
+                    user_message = user_message.replace("{$analysis_data}", str(response.content))
+                #print(f"user_message:{user_message}")
+
+                response = asyncio.run(invoke_agent(agent, user_message))
+                if agent.name != "portfolio_manager_agent":
+                    analysis_data[f"{agent.name}"] = parse_hedge_fund_response(str(response.content))
 
         return {
-            "decisions": parse_hedge_fund_response(final_state["messages"][-1].content),
-            "analyst_signals": final_state["data"]["analyst_signals"],
+            "decisions": parse_hedge_fund_response(str(response.content)),
+            "analyst_signals": analysis_data
         }
     finally:
         # Stop progress tracking
@@ -98,39 +128,53 @@ def start(state: AgentState):
     """Initialize the workflow with the input message."""
     return state
 
+def create_agents(selected_analysts=None, model_id="gpt-4o-mini", model_provider="OpenAI", service_id="HedgeFundAgent"):
+    agents = []
 
-def create_workflow(selected_analysts=None):
-    """Create the workflow with selected analysts."""
-    workflow = StateGraph(AgentState)
-    workflow.add_node("start_node", start)
+    kernel, settings = create_kernel_with_chat_completion(model_id=model_id, model_provider=model_provider, service_id=service_id)
 
     # Get analyst nodes from the configuration
     analyst_nodes = get_analyst_nodes()
-
-    # Default to all analysts if none selected
-    if selected_analysts is None:
-        selected_analysts = list(analyst_nodes.keys())
     # Add selected analyst nodes
+    plugin_registry = {
+        "AnalysisDataPlugin4AswathDamodaran": AnalysisDataPlugin4AswathDamodaran,
+        "AnalysisDataPlugin4CathieWood": AnalysisDataPlugin4CathieWood,
+        "AnalysisDataPlugin4BenGraham": AnalysisDataPlugin4BenGraham,
+        "AnalysisDataPlugin4BillAckman": AnalysisDataPlugin4BillAckman,
+        "AnalysisDataPlugin4CharlieMunger": AnalysisDataPlugin4CharlieMunger,
+        "AnalysisDataPlugin4MichaelBurry": AnalysisDataPlugin4MichaelBurry,
+        "AnalysisDataPlugin4PeterLynch": AnalysisDataPlugin4PeterLynch,
+        "AnalysisDataPlugin4PhilFisher": AnalysisDataPlugin4PhilFisher,
+        "AnalysisDataPlugin4RakeshJhunjhunwala": AnalysisDataPlugin4RakeshJhunjhunwala,
+        "AnalysisDataPlugin4StanleyDruckenmiller": AnalysisDataPlugin4StanleyDruckenmiller,
+        "AnalysisDataPlugin4WarrenBuffett": AnalysisDataPlugin4WarrenBuffett,
+        "PorfolioDataPlugin": PorfolioDataPlugin,
+        "RiskDataPlugin": RiskDataPlugin
+        }
+
     for analyst_key in selected_analysts:
-        node_name, node_func = analyst_nodes[analyst_key]
-        workflow.add_node(node_name, node_func)
-        workflow.add_edge("start_node", node_name)
+        node_name, instructions, user_message_template, plugins = analyst_nodes[analyst_key]
+        plugin_instances = []
+        for plugin_name in plugins:
+            if plugin_name in plugin_registry:
+                instance = plugin_registry[plugin_name]()
+                plugin_instances.append(instance)
 
-    # Always add risk and portfolio management
-    workflow.add_node("risk_management_agent", risk_management_agent)
-    workflow.add_node("portfolio_manager", portfolio_management_agent)
+        agent = create_agent(name=node_name, kernel= kernel, instructions=instructions, plugins=plugin_instances)
+        agents.append((agent, user_message_template))
 
-    # Connect selected analysts to risk management
-    for analyst_key in selected_analysts:
-        node_name = analyst_nodes[analyst_key][0]
-        workflow.add_edge(node_name, "risk_management_agent")
+    #ad the portfolio manager agent to the chain of agents
+    node_name, instructions, user_message_template, plugins = analyst_nodes["portfolio_manager"]
+    plugin_instances = []
+    for plugin_name in plugins:
+        if plugin_name in plugin_registry:
+            instance = plugin_registry[plugin_name]()
+            plugin_instances.append(instance)
 
-    workflow.add_edge("risk_management_agent", "portfolio_manager")
-    workflow.add_edge("portfolio_manager", END)
+    agent = create_agent(name=node_name, kernel= kernel, instructions=instructions, plugins=plugin_instances)
+    agents.append((agent, user_message_template))
 
-    workflow.set_entry_point("start_node")
-    return workflow
-
+    return agents
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the hedge fund trading system")
@@ -248,18 +292,6 @@ if __name__ == "__main__":
         else:
             model_provider = "Unknown"
             print(f"\nSelected model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
-
-    # Create the workflow with selected analysts
-    workflow = create_workflow(selected_analysts)
-    app = workflow.compile()
-
-    if args.show_agent_graph:
-        file_path = ""
-        if selected_analysts is not None:
-            for selected_analyst in selected_analysts:
-                file_path += selected_analyst + "_"
-            file_path += "graph.png"
-        save_graph_as_png(app, file_path)
 
     # Validate dates if provided
     if args.start_date:

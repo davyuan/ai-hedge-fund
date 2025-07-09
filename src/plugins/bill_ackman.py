@@ -1,35 +1,28 @@
-from langchain_openai import ChatOpenAI
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 import json
 from typing_extensions import Literal
 from src.utils.progress import progress
 from src.utils.llm import call_llm
+from src.graph.state import AgentState, show_agent_reasoning
+from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
+from typing import Annotated
+import datetime as dt
+from src.utils.progress import progress
+from semantic_kernel.functions import kernel_function
 
+class AnalysisDataPlugin4BillAckman:
 
-class BillAckmanSignal(BaseModel):
-    signal: Literal["bullish", "bearish", "neutral"]
-    confidence: float
-    reasoning: str
+    @kernel_function(description="Provides essential data for a specified stock ticker on a specified end date. "
+                        "This function specifically requires an 'end date' to get data as of that point in time. "
+                        "The 'end_date' MUST be provided in 'YYYY-MM-DD' format, for example, '2025-07-06'."
+                        "The data returned includes disruptive_analysis, innovation_analysis and valuation_analysis.")
+    def get_analysis_data(self, ticker:Annotated[str, "The stock ticker symbol (e.g., 'TSLA', 'GOOG', 'AAPL') for which to retrieve analysis data."],
+            end_date: Annotated[str, "REQUIRED: The end date for data retrieval. This MUST be in 'YYYY-MM-DD' format (e.g., '2025-07-06'). Data will be retrieved as of this exact date."]        ) -> Annotated[str, "Returns analysis data Cathie Wood is interested in, based on the ticker and end date."]:
+        #print(f"AnalysisDataPlugin4BillAckman called with ticker:{ticker}, end_date:{end_date}")
+        analysis_data = {}
 
-
-def bill_ackman_agent(state: AgentState):
-    """
-    Analyzes stocks using Bill Ackman's investing principles and LLM reasoning.
-    Fetches multiple periods of data for a more robust long-term view.
-    Incorporates brand/competitive advantage, activism potential, and other key factors.
-    """
-    data = state["data"]
-    end_date = data["end_date"]
-    tickers = data["tickers"]
-    
-    analysis_data = {}
-    ackman_analysis = {}
-    
-    for ticker in tickers:
         progress.update_status("bill_ackman_agent", ticker, "Fetching financial metrics")
         metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5)
         
@@ -95,42 +88,8 @@ def bill_ackman_agent(state: AgentState):
             "activism_analysis": activism_analysis,
             "valuation_analysis": valuation_analysis
         }
-        
-        progress.update_status("bill_ackman_agent", ticker, "Generating Bill Ackman analysis")
-        ackman_output = generate_ackman_output(
-            ticker=ticker, 
-            analysis_data=analysis_data,
-            state=state,
-        )
-        
-        ackman_analysis[ticker] = {
-            "signal": ackman_output.signal,
-            "confidence": ackman_output.confidence,
-            "reasoning": ackman_output.reasoning
-        }
-        
-        progress.update_status("bill_ackman_agent", ticker, "Done", analysis=ackman_output.reasoning)
-    
-    # Wrap results in a single message for the chain
-    message = HumanMessage(
-        content=json.dumps(ackman_analysis),
-        name="bill_ackman_agent"
-    )
-    
-    # Show reasoning if requested
-    if state["metadata"]["show_reasoning"]:
-        show_agent_reasoning(ackman_analysis, "Bill Ackman Agent")
-    
-    # Add signals to the overall state
-    state["data"]["analyst_signals"]["bill_ackman_agent"] = ackman_analysis
-
-    progress.update_status("bill_ackman_agent", None, "Done")
-
-    return {
-        "messages": [message],
-        "data": state["data"]
-    }
-
+        progress.update_status("bill_ackman_agent", ticker, "Done")
+        return analysis_data
 
 def analyze_business_quality(metrics: list, financial_line_items: list) -> dict:
     """
@@ -392,74 +351,3 @@ def analyze_valuation(financial_line_items: list, market_cap: float) -> dict:
         "intrinsic_value": intrinsic_value,
         "margin_of_safety": margin_of_safety
     }
-
-
-def generate_ackman_output(
-    ticker: str,
-    analysis_data: dict[str, any],
-    state: AgentState,
-) -> BillAckmanSignal:
-    """
-    Generates investment decisions in the style of Bill Ackman.
-    Includes more explicit references to brand strength, activism potential, 
-    catalysts, and management changes in the system prompt.
-    """
-    template = ChatPromptTemplate.from_messages([
-        (
-            "system",
-            """You are a Bill Ackman AI agent, making investment decisions using his principles:
-
-            1. Seek high-quality businesses with durable competitive advantages (moats), often in well-known consumer or service brands.
-            2. Prioritize consistent free cash flow and growth potential over the long term.
-            3. Advocate for strong financial discipline (reasonable leverage, efficient capital allocation).
-            4. Valuation matters: target intrinsic value with a margin of safety.
-            5. Consider activism where management or operational improvements can unlock substantial upside.
-            6. Concentrate on a few high-conviction investments.
-
-            In your reasoning:
-            - Emphasize brand strength, moat, or unique market positioning.
-            - Review free cash flow generation and margin trends as key signals.
-            - Analyze leverage, share buybacks, and dividends as capital discipline metrics.
-            - Provide a valuation assessment with numerical backup (DCF, multiples, etc.).
-            - Identify any catalysts for activism or value creation (e.g., cost cuts, better capital allocation).
-            - Use a confident, analytic, and sometimes confrontational tone when discussing weaknesses or opportunities.
-
-            Return your final recommendation (signal: bullish, neutral, or bearish) with a 0-100 confidence and a thorough reasoning section.
-            """
-        ),
-        (
-            "human",
-            """Based on the following analysis, create an Ackman-style investment signal.
-
-            Analysis Data for {ticker}:
-            {analysis_data}
-
-            Return your output in strictly valid JSON:
-            {{
-              "signal": "bullish" | "bearish" | "neutral",
-              "confidence": float (0-100),
-              "reasoning": "string"
-            }}
-            """
-        )
-    ])
-
-    prompt = template.invoke({
-        "analysis_data": json.dumps(analysis_data, indent=2),
-        "ticker": ticker
-    })
-
-    def create_default_bill_ackman_signal():
-        return BillAckmanSignal(
-            signal="neutral",
-            confidence=0.0,
-            reasoning="Error in analysis, defaulting to neutral"
-        )
-
-    return call_llm(
-        prompt=prompt, 
-        pydantic_model=BillAckmanSignal, 
-        agent_name="bill_ackman_agent", 
-        state=state,
-        default_factory=create_default_bill_ackman_signal,
-    )

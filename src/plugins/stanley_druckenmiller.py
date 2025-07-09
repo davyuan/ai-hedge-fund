@@ -7,41 +7,34 @@ from src.tools.api import (
     get_company_news,
     get_prices,
 )
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import HumanMessage
-from pydantic import BaseModel
 import json
 from typing_extensions import Literal
 from src.utils.progress import progress
 from src.utils.llm import call_llm
 import statistics
+from src.graph.state import AgentState, show_agent_reasoning
+from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
+import json
+from typing_extensions import Literal
+from typing import Annotated
+import datetime as dt
+from semantic_kernel.functions import kernel_function
+from src.mcp.client import mcp_read_state
 
+class AnalysisDataPlugin4StanleyDruckenmiller:
 
-class StanleyDruckenmillerSignal(BaseModel):
-    signal: Literal["bullish", "bearish", "neutral"]
-    confidence: float
-    reasoning: str
+    @kernel_function(description="Provides essential data for a specified stock ticker on a specified end date. "
+                        "This function specifically requires an 'end date' to get data as of that point in time. "
+                        "The 'end_date' MUST be provided in 'YYYY-MM-DD' format, for example, '2025-07-06'."
+                        "The data returned includes disruptive_analysis, innovation_analysis and valuation_analysis.")
+    async def get_analysis_data(self, ticker:Annotated[str, "The stock ticker symbol (e.g., 'TSLA', 'GOOG', 'AAPL') for which to retrieve analysis data."],
+            end_date: Annotated[str, "REQUIRED: The end date for data retrieval. This MUST be in 'YYYY-MM-DD' format (e.g., '2025-07-06'). Data will be retrieved as of this exact date."]        ) -> Annotated[str, "Returns analysis data Cathie Wood is interested in, based on the ticker and end date."]:
+        #print(f"AnalysisDataPlugin4 called with ticker:{ticker}, end_date:{end_date}")
+        analysis_data = {}
+        result = await mcp_read_state()
+        state = json.loads(result[0].text)
+        start_date = state["data"]["start_date"]
 
-
-def stanley_druckenmiller_agent(state: AgentState):
-    """
-    Analyzes stocks using Stanley Druckenmiller's investing principles:
-      - Seeking asymmetric risk-reward opportunities
-      - Emphasizing growth, momentum, and sentiment
-      - Willing to be aggressive if conditions are favorable
-      - Focus on preserving capital by avoiding high-risk, low-reward bets
-
-    Returns a bullish/bearish/neutral signal with confidence and reasoning.
-    """
-    data = state["data"]
-    start_date = data["start_date"]
-    end_date = data["end_date"]
-    tickers = data["tickers"]
-
-    analysis_data = {}
-    druck_analysis = {}
-
-    for ticker in tickers:
         progress.update_status("stanley_druckenmiller_agent", ticker, "Fetching financial metrics")
         metrics = get_financial_metrics(ticker, end_date, period="annual", limit=5)
 
@@ -133,33 +126,9 @@ def stanley_druckenmiller_agent(state: AgentState):
             "valuation_analysis": valuation_analysis,
         }
 
-        progress.update_status("stanley_druckenmiller_agent", ticker, "Generating Stanley Druckenmiller analysis")
-        druck_output = generate_druckenmiller_output(
-            ticker=ticker,
-            analysis_data=analysis_data,
-            state=state,
-        )
+        progress.update_status("stanley_druckenmiller_agent", ticker, "Done")
 
-        druck_analysis[ticker] = {
-            "signal": druck_output.signal,
-            "confidence": druck_output.confidence,
-            "reasoning": druck_output.reasoning,
-        }
-
-        progress.update_status("stanley_druckenmiller_agent", ticker, "Done", analysis=druck_output.reasoning)
-
-    # Wrap results in a single message
-    message = HumanMessage(content=json.dumps(druck_analysis), name="stanley_druckenmiller_agent")
-
-    if state["metadata"].get("show_reasoning"):
-        show_agent_reasoning(druck_analysis, "Stanley Druckenmiller Agent")
-
-    state["data"]["analyst_signals"]["stanley_druckenmiller_agent"] = druck_analysis
-
-    progress.update_status("stanley_druckenmiller_agent", None, "Done")
-    
-    return {"messages": [message], "data": state["data"]}
-
+        return analysis_data
 
 def analyze_growth_and_momentum(financial_line_items: list, prices: list) -> dict:
     """
@@ -518,78 +487,3 @@ def analyze_druckenmiller_valuation(financial_line_items: list, market_cap: floa
     final_score = min(10, (raw_score / 8) * 10)
 
     return {"score": final_score, "details": "; ".join(details)}
-
-
-def generate_druckenmiller_output(
-    ticker: str,
-    analysis_data: dict[str, any],
-    state: AgentState,
-) -> StanleyDruckenmillerSignal:
-    """
-    Generates a JSON signal in the style of Stanley Druckenmiller.
-    """
-    template = ChatPromptTemplate.from_messages(
-        [
-            (
-              "system",
-              """You are a Stanley Druckenmiller AI agent, making investment decisions using his principles:
-            
-              1. Seek asymmetric risk-reward opportunities (large upside, limited downside).
-              2. Emphasize growth, momentum, and market sentiment.
-              3. Preserve capital by avoiding major drawdowns.
-              4. Willing to pay higher valuations for true growth leaders.
-              5. Be aggressive when conviction is high.
-              6. Cut losses quickly if the thesis changes.
-                            
-              Rules:
-              - Reward companies showing strong revenue/earnings growth and positive stock momentum.
-              - Evaluate sentiment and insider activity as supportive or contradictory signals.
-              - Watch out for high leverage or extreme volatility that threatens capital.
-              - Output a JSON object with signal, confidence, and a reasoning string.
-              
-              When providing your reasoning, be thorough and specific by:
-              1. Explaining the growth and momentum metrics that most influenced your decision
-              2. Highlighting the risk-reward profile with specific numerical evidence
-              3. Discussing market sentiment and catalysts that could drive price action
-              4. Addressing both upside potential and downside risks
-              5. Providing specific valuation context relative to growth prospects
-              6. Using Stanley Druckenmiller's decisive, momentum-focused, and conviction-driven voice
-              
-              For example, if bullish: "The company shows exceptional momentum with revenue accelerating from 22% to 35% YoY and the stock up 28% over the past three months. Risk-reward is highly asymmetric with 70% upside potential based on FCF multiple expansion and only 15% downside risk given the strong balance sheet with 3x cash-to-debt. Insider buying and positive market sentiment provide additional tailwinds..."
-              For example, if bearish: "Despite recent stock momentum, revenue growth has decelerated from 30% to 12% YoY, and operating margins are contracting. The risk-reward proposition is unfavorable with limited 10% upside potential against 40% downside risk. The competitive landscape is intensifying, and insider selling suggests waning confidence. I'm seeing better opportunities elsewhere with more favorable setups..."
-              """,
-            ),
-            (
-              "human",
-              """Based on the following analysis, create a Druckenmiller-style investment signal.
-
-              Analysis Data for {ticker}:
-              {analysis_data}
-
-              Return the trading signal in this JSON format:
-              {{
-                "signal": "bullish/bearish/neutral",
-                "confidence": float (0-100),
-                "reasoning": "string"
-              }}
-              """,
-            ),
-        ]
-    )
-
-    prompt = template.invoke({"analysis_data": json.dumps(analysis_data, indent=2), "ticker": ticker})
-
-    def create_default_signal():
-        return StanleyDruckenmillerSignal(
-            signal="neutral",
-            confidence=0.0,
-            reasoning="Error in analysis, defaulting to neutral"
-        )
-
-    return call_llm(
-        prompt=prompt,
-        pydantic_model=StanleyDruckenmillerSignal,
-        agent_name="stanley_druckenmiller_agent",
-        state=state,
-        default_factory=create_default_signal,
-    )
