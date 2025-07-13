@@ -7,8 +7,6 @@ from typing_extensions import Literal
 
 from src.graph.state import AgentState, show_agent_reasoning
 from src.utils.progress import progress
-from src.utils.llm import call_llm
-
 from semantic_kernel.functions import kernel_function
 from src.mcp.client import mcp_read_state, mcp_upsert_state
 

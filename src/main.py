@@ -12,7 +12,7 @@ from src.graph.state import AgentState
 from src.utils.display import print_trading_output
 from src.utils.analysts import ANALYST_ORDER, get_analyst_nodes
 from src.utils.progress import progress
-from src.llm.models import LLM_ORDER, OLLAMA_LLM_ORDER, get_model_info, ModelProvider
+from src.llm.models import LLM_ORDER, ModelProvider
 from src.utils.ollama import ensure_ollama_and_model
 from src.utils.agents import create_kernel_with_chat_completion, create_agent
 from src.mcp.client import mcp_read_state, mcp_upsert_state
@@ -29,7 +29,6 @@ from src.plugins.stanley_druckenmiller import AnalysisDataPlugin4StanleyDruckenm
 from src.plugins.warren_buffett import AnalysisDataPlugin4WarrenBuffett
 from src.plugins.portfolio_manager import PorfolioDataPlugin
 from src.plugins.risk_manager import RiskDataPlugin
-from src.utils.visualize import save_graph_as_png
 from dateutil.relativedelta import relativedelta
 from semantic_kernel.agents import ChatCompletionAgent
 
@@ -188,8 +187,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--end-date", type=str, help="End date (YYYY-MM-DD). Defaults to today")
     parser.add_argument("--show-reasoning", action="store_true", help="Show reasoning from each agent")
-    parser.add_argument("--show-agent-graph", action="store_true", help="Show the agent graph")
-    parser.add_argument("--ollama", action="store_true", help="Use Ollama for local LLM inference")
 
     args = parser.parse_args()
 
@@ -224,74 +221,25 @@ if __name__ == "__main__":
     model_name = ""
     model_provider = ""
 
-    if args.ollama:
-        print(f"{Fore.CYAN}Using Ollama for local LLM inference.{Style.RESET_ALL}")
+    # Use the standard cloud-based LLM selection
+    model_choice = questionary.select(
+        "Select your LLM model:",
+        choices=[questionary.Choice(display, value=(name, provider)) for display, name, provider in LLM_ORDER],
+        style=questionary.Style(
+            [
+                ("selected", "fg:green bold"),
+                ("pointer", "fg:green bold"),
+                ("highlighted", "fg:green"),
+                ("answer", "fg:green bold"),
+            ]
+        ),
+    ).ask()
 
-        # Select from Ollama-specific models
-        model_name: str = questionary.select(
-            "Select your Ollama model:",
-            choices=[questionary.Choice(display, value=value) for display, value, _ in OLLAMA_LLM_ORDER],
-            style=questionary.Style(
-                [
-                    ("selected", "fg:green bold"),
-                    ("pointer", "fg:green bold"),
-                    ("highlighted", "fg:green"),
-                    ("answer", "fg:green bold"),
-                ]
-            ),
-        ).ask()
+    if not model_choice:
+        print("\n\nInterrupt received. Exiting...")
+        sys.exit(0)
 
-        if not model_name:
-            print("\n\nInterrupt received. Exiting...")
-            sys.exit(0)
-
-        if model_name == "-":
-            model_name = questionary.text("Enter the custom model name:").ask()
-            if not model_name:
-                print("\n\nInterrupt received. Exiting...")
-                sys.exit(0)
-
-        # Ensure Ollama is installed, running, and the model is available
-        if not ensure_ollama_and_model(model_name):
-            print(f"{Fore.RED}Cannot proceed without Ollama and the selected model.{Style.RESET_ALL}")
-            sys.exit(1)
-
-        model_provider = ModelProvider.OLLAMA.value
-        print(f"\nSelected {Fore.CYAN}Ollama{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
-    else:
-        # Use the standard cloud-based LLM selection
-        model_choice = questionary.select(
-            "Select your LLM model:",
-            choices=[questionary.Choice(display, value=(name, provider)) for display, name, provider in LLM_ORDER],
-            style=questionary.Style(
-                [
-                    ("selected", "fg:green bold"),
-                    ("pointer", "fg:green bold"),
-                    ("highlighted", "fg:green"),
-                    ("answer", "fg:green bold"),
-                ]
-            ),
-        ).ask()
-
-        if not model_choice:
-            print("\n\nInterrupt received. Exiting...")
-            sys.exit(0)
-
-        model_name, model_provider = model_choice
-
-        # Get model info using the helper function
-        model_info = get_model_info(model_name, model_provider)
-        if model_info:
-            if model_info.is_custom():
-                model_name = questionary.text("Enter the custom model name:").ask()
-                if not model_name:
-                    print("\n\nInterrupt received. Exiting...")
-                    sys.exit(0)
-
-            print(f"\nSelected {Fore.CYAN}{model_provider}{Style.RESET_ALL} model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
-        else:
-            model_provider = "Unknown"
-            print(f"\nSelected model: {Fore.GREEN + Style.BRIGHT}{model_name}{Style.RESET_ALL}\n")
+    model_name, model_provider = model_choice
 
     # Validate dates if provided
     if args.start_date:

@@ -1,3 +1,9 @@
+from typing_extensions import Literal
+import json
+from typing_extensions import Literal
+from typing import Annotated
+import datetime as dt
+
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import (
     get_financial_metrics,
@@ -7,17 +13,10 @@ from src.tools.api import (
     get_company_news,
     get_prices,
 )
-import json
-from typing_extensions import Literal
 from src.utils.progress import progress
-from src.utils.llm import call_llm
 import statistics
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
-import json
-from typing_extensions import Literal
-from typing import Annotated
-import datetime as dt
 from semantic_kernel.functions import kernel_function
 from src.mcp.client import mcp_read_state
 

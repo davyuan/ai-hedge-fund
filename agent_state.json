@@ -1,14 +1,14 @@
 {
     "data": {
         "tickers": [
-            "TSLA"
+            "AAPL"
         ],
         "portfolio": {
             "cash": 100000.0,
             "margin_requirement": 0.0,
             "margin_used": 0.0,
             "positions": {
-                "TSLA": {
+                "AAPL": {
                     "long": 0,
                     "short": 0,
                     "long_cost_basis": 0.0,
@@ -17,19 +17,19 @@
                 }
             },
             "realized_gains": {
-                "TSLA": {
+                "AAPL": {
                     "long": 0.0,
                     "short": 0.0
                 }
             }
         },
-        "start_date": "2025-04-08",
-        "end_date": "2025-07-08",
+        "start_date": "2025-04-12",
+        "end_date": "2025-07-12",
         "analyst_signals": {
             "risk_management_agent": {
-                "TSLA": {
+                "AAPL": {
                     "remaining_position_limit": 20000.0,
-                    "current_price": 297.81,
+                    "current_price": 211.16,
                     "reasoning": {
                         "portfolio_value": 100000.0,
                         "current_position_value": 0.0,
@@ -43,7 +43,7 @@
     },
     "metadata": {
         "show_reasoning": false,
-        "model_name": "deepseek-chat",
-        "model_provider": "DeepSeek"
+        "model_name": "gpt-4o-mini",
+        "model_provider": "OpenAI"
     }
 }
